@@ -5,11 +5,34 @@
 #include <unistd.h>
 #include <string.h>
 #include <cstring>
+#include <cstdlib>
+#include <cassert>
+#include <iostream>
 
 #define SOCKADDR_IN struct sockaddr_in 
 #define SOCKADDR struct sockaddr 
 
 using namespace std;
+
+int clients[1024];
+int connectedCount = 0;
+
+template <std::size_t N>
+int execvp(const char* file, const char* const (&argv)[N])
+{
+  assert((N > 0) && (argv[N - 1] == nullptr));
+
+  return execvp(file, const_cast<char* const*>(argv));
+}
+
+
+void handleShit(){
+    const char* command = "./clientHandler";
+    const char* const argument_list[] = {"./clientHandler", NULL};
+    int i = fork();
+    if(i == 0) execvp(command, argument_list);
+    cout << "lmaojerry" << endl;
+}
 
 int main()
 {
@@ -24,23 +47,33 @@ int main()
     {
         printf("Failed to bind to port number 8888\n");
         close(s);
-    }else
+        return 0;
+    }
+    listen(s, 10);
+    while (1)
     {
-        listen(s, 10);
-        while (0 == 0)
+        int c = accept(s, (SOCKADDR*)&caddr, &clen);
+        handleShit();
+        cerr << c << endl;
+        if (c > 0)
         {
-            int c = accept(s, (SOCKADDR*)&caddr, &clen);
-            if (c > 0)
-            {
-                const char* welcome = "Hello World TCP Socket Programming!\n";
-                int sent = send(c, welcome, strlen(welcome), 0);
-                printf("Sent: %d (Bytes)\n", sent);    
-                char buffer[1024] = { 0 };
-                int received = recv(c, buffer, sizeof(buffer) - 1, 0);
-                printf("Received: %d (Bytes)\n", received);
-                printf("%s\n", buffer);
-                close(c);
-            }
+            clients[connectedCount] = c;
+            connectedCount++;
+
+            // const char* welcome = "Hello World TCP Socket Programming!\n";
+            // int sent = send(c, welcome, strlen(welcome), 0);
+            // printf("Sent: %d (Bytes)\n", sent);    
+            // char buffer[1024] = { 0 };
+            // int received = recv(c, buffer, sizeof(buffer) - 1, 0);
+            // printf("Received: %d (Bytes)\n", received);
+            // printf("%s\n", buffer);
+            //close(c);
         }
+        cout << "a" << endl;
+        const char* welcome = "Hello World TCP Socket Programming!\n";
+        for(int i = 0; i < connectedCount; i++){
+            send(clients[i], welcome, strlen(welcome), 0);
+        }
+        //system("sleep 1");
     }
 }

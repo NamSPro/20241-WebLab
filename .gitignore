@@ -1,4 +1,4 @@
 .vscode
 
-server.exe
-server.o
+server
+clientHandler
