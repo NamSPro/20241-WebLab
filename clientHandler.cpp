@@ -8,12 +8,16 @@
 #include <cstdlib>
 #include <iostream>
 
-#define SOCKADDR_IN struct sockaddr_in 
-#define SOCKADDR struct sockaddr 
-
 using namespace std;
 
-int main()
-{
-    cout << "lmao" << endl;
+int main(int argc, char* argv[]){
+    int c = atoi(argv[1]);
+    const char* welcome = "Hello World Client Handling!\n";
+    while(1){
+        char buffer[1024] = { 0 };
+        recv(c, buffer, sizeof(buffer) - 1, 0);
+        while(buffer[strlen(buffer) - 1] == '\r' || buffer[strlen(buffer) - 1] == '\n') buffer[strlen(buffer) - 1] = 0;
+        send(c, buffer, strlen(buffer), 0);
+    }
+    return 0;
 }
