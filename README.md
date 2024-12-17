@@ -1,3 +1,4 @@
 # how to basics
 ```make
-./server```
+make
+./server
