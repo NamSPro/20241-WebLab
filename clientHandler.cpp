@@ -30,6 +30,7 @@ void handleLogin(){
     char usernameBuffer[1024] = { 0 };
     char passwordBuffer[1024] = { 0 };
     const char* accountNotFound = "Account not found.\n";
+    const char* loginFailure = "Wrong password.\n";
     const char* loginSuccess = "ok\n";
 
     send(c, usernamePrompt, strlen(usernamePrompt), 0);
@@ -42,12 +43,17 @@ void handleLogin(){
         passwordBuffer[strlen(passwordBuffer) - 1] = 0;
 
     loadAccounts();
-    json password = accounts[usernameBuffer];
+    string password = accounts[usernameBuffer];
     if(accounts[usernameBuffer].json::is_null()){
         send(c, accountNotFound, strlen(accountNotFound), 0);
         return;
     }
-    if(strcmp(password.dump().c_str(), passwordBuffer)) send(c, loginSuccess, strlen(loginSuccess), 0);
+    if(strcmp(password.c_str(), passwordBuffer) != 0){
+        send(c, loginFailure, strlen(loginFailure), 0);
+    }
+    else{
+        send(c, loginSuccess, strlen(loginSuccess), 0);
+    }
 }
 
 void handleRegister(){
@@ -56,7 +62,7 @@ void handleRegister(){
 
 int main(int argc, char* argv[]){
     c = atoi(argv[1]);
-    const char* welcome = "1. Login\n2. Register\nYour choice: ";
+    const char* welcome = "Available functions:\n1. Login\n2. Register\nYour choice: ";
     while(1){
         send(c, welcome, strlen(welcome), 0);
         char buffer[1024] = { 0 };
