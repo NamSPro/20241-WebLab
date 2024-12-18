@@ -50,6 +50,7 @@ int main(){
         int c = accept(s, (SOCKADDR*)&caddr, &clen);
         if (c > 0)
         {
+            cout << "A client connected." << endl;
             clients[connectedCount] = c;
             connectedCount++;
             handleClient(c);
