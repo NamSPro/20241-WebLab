@@ -6,7 +6,9 @@
 #include <string.h>
 #include <cstring>
 #include <cstdlib>
+#include <cassert>
 #include <iostream>
+#include <errno.h>
 
 #include <fstream>
 #include "lib/json.hpp"
@@ -16,7 +18,9 @@ using json = nlohmann::json;
 
 int c; // client's socket number
 const char* invalidCommand = "Invalid command.\n";
-json accounts = {};
+json accounts = {}, onlineAccounts = {};
+bool login = false;
+char currentAccount[1024] = { 0 };
 
 void loadAccounts(){
     ifstream f("accounts.json");
@@ -30,6 +34,18 @@ void saveAccounts(){
     f.close();
 }
 
+void loadOnlineUsers(){
+    ifstream f("online.json");
+    onlineAccounts = json::parse(f);
+    f.close();
+}
+
+void saveOnlineUsers(){
+    ofstream f("online.json");
+    f << onlineAccounts.dump(4);
+    f.close();
+}
+
 void handleLogin(){
     const char* usernamePrompt = "Enter username: ";
     const char* passwordPrompt = "Enter password: ";
@@ -37,7 +53,7 @@ void handleLogin(){
     char passwordBuffer[1024] = { 0 };
     const char* accountNotFound = "Account not found.\n\n\n";
     const char* loginFailure = "Wrong password.\n\n\n";
-    const char* loginSuccess = "ok\n\n\n";
+    const char* loginSuccess = "Login successful.\n\n\n";
 
     send(c, usernamePrompt, strlen(usernamePrompt), 0);
     recv(c, usernameBuffer, sizeof(usernameBuffer) - 1, 0);
@@ -59,6 +75,8 @@ void handleLogin(){
     }
     else{
         send(c, loginSuccess, strlen(loginSuccess), 0);
+        login = true;
+        strcpy(currentAccount, usernameBuffer);
     }
 }
 
@@ -69,9 +87,10 @@ void handleRegister(){
     char usernameBuffer[1024] = { 0 };
     char passwordBuffer[1024] = { 0 };
     char passwordBuffer2[1024] = { 0 };
+    const char* invalidInput = "Invalid input.\n\n\n";
     const char* passwordMismatch = "Password doesnt match.\n\n\n";
     const char* accountExist = "Account already exists.\n\n\n";
-    const char* registerSuccess = "ok\n\n\n";
+    const char* registerSuccess = "Registration successful. Going back to login menu.\n\n\n";
 
     send(c, usernamePrompt, strlen(usernamePrompt), 0);
     recv(c, usernameBuffer, sizeof(usernameBuffer) - 1, 0);
@@ -86,6 +105,10 @@ void handleRegister(){
     while(passwordBuffer2[strlen(passwordBuffer2) - 1] == '\r' || passwordBuffer2[strlen(passwordBuffer2) - 1] == '\n')
         passwordBuffer2[strlen(passwordBuffer2) - 1] = 0;
 
+    if(!strcmp(usernameBuffer, "") || !strcmp(passwordBuffer, "")){
+        send(c, invalidInput, strlen(invalidInput), 0);
+        return;
+    }
     if(strcmp(passwordBuffer, passwordBuffer2) != 0){
         send(c, passwordMismatch, strlen(passwordMismatch), 0);
         return;
@@ -101,20 +124,24 @@ void handleRegister(){
     return;
 }
 
-int main(int argc, char* argv[]){
-    c = atoi(argv[1]);
+void loginMenu(){
     const char* welcome = "Available functions:\n1. Login\n2. Register\n3. Quit\nYour choice: ";
     const char* goodbye = "Goodbye.";
 
     while(1){
         send(c, welcome, strlen(welcome), 0);
         char buffer[1024] = { 0 };
-        recv(c, buffer, sizeof(buffer) - 1, 0);
+        int i = recv(c, buffer, sizeof(buffer) - 1, 0);
+        if(errno == ENOTCONN || i == 0){
+            // cout << "connection died in login.\n";
+            return;
+        }
         while(buffer[strlen(buffer) - 1] == '\r' || buffer[strlen(buffer) - 1] == '\n') buffer[strlen(buffer) - 1] = 0;
         int cmd = atoi(buffer);
         switch (cmd){
             case 1:
                 handleLogin();
+                if(login) return;
                 break;
             case 2:
                 handleRegister();
@@ -122,11 +149,37 @@ int main(int argc, char* argv[]){
             case 3:
                 send(c, goodbye, strlen(goodbye), 0);
                 close(c);
-                return 0;
+                return;
             default:
                 send(c, invalidCommand, strlen(invalidCommand), 0);
                 continue;
         }
     }
+}
+
+void mainMenu(){
+    assert(login);
+    loadOnlineUsers();
+    onlineAccounts[currentAccount] = c;
+    saveOnlineUsers();
+    while(1){
+        char buffer[1024] = { 0 };
+        int i = recv(c, buffer, sizeof(buffer) - 1, 0);
+        if(errno == ENOTCONN || i == 0){
+            // cout << "connection died in main.\n";
+            onlineAccounts.erase(currentAccount);
+            saveOnlineUsers();
+            return;
+        }
+    }
+    return;
+}
+
+int main(int argc, char* argv[]){
+    c = atoi(argv[1]);
+    loginMenu();
+    if(!login) return 0;
+    cout << "hi " << currentAccount << endl;
+    mainMenu();
     return 0;
 }
