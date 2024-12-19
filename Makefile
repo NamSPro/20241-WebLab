@@ -1,5 +1,5 @@
-server: clientHandler server.cpp
-	g++ server.cpp -o server
+server: clientHandler src/server.cpp
+	g++ src/server.cpp -o server
 
-clientHandler: clientHandler.cpp
-	g++ clientHandler.cpp -o clientHandler
+clientHandler: src/clientHandler.cpp
+	g++ src/clientHandler.cpp -o clientHandler

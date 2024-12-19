@@ -11,7 +11,7 @@
 #include <errno.h>
 
 #include <fstream>
-#include "lib/json.hpp"
+#include "../lib/json.hpp"
 
 using namespace std;
 using json = nlohmann::json;
@@ -22,27 +22,15 @@ json accounts = {}, onlineAccounts = {};
 bool login = false;
 char currentAccount[1024] = { 0 };
 
-void loadAccounts(){
-    ifstream f("accounts.json");
-    accounts = json::parse(f);
+void loadJson(json& target, string path){
+    ifstream f(path);
+    target = json::parse(f);
     f.close();
 }
 
-void saveAccounts(){
-    ofstream f("accounts.json");
-    f << accounts.dump(4);
-    f.close();
-}
-
-void loadOnlineUsers(){
-    ifstream f("online.json");
-    onlineAccounts = json::parse(f);
-    f.close();
-}
-
-void saveOnlineUsers(){
-    ofstream f("online.json");
-    f << onlineAccounts.dump(4);
+void saveJson(json& target, string path){
+    ofstream f(path);
+    f << target.dump(4);
     f.close();
 }
 
@@ -64,7 +52,7 @@ void handleLogin(){
     while(passwordBuffer[strlen(passwordBuffer) - 1] == '\r' || passwordBuffer[strlen(passwordBuffer) - 1] == '\n')
         passwordBuffer[strlen(passwordBuffer) - 1] = 0;
 
-    loadAccounts();
+    loadJson(accounts, "db/accounts.json");
     if(accounts[usernameBuffer].json::is_null()){
         send(c, accountNotFound, strlen(accountNotFound), 0);
         return;
@@ -113,14 +101,14 @@ void handleRegister(){
         send(c, passwordMismatch, strlen(passwordMismatch), 0);
         return;
     }
-    loadAccounts();
+    loadJson(accounts, "db/accounts.json");
     if(!accounts[usernameBuffer].json::is_null()){
         send(c, accountExist, strlen(accountExist), 0);
         return;
     }
     send(c, registerSuccess, strlen(registerSuccess), 0);
     accounts[usernameBuffer] = passwordBuffer;
-    saveAccounts();
+    saveJson(accounts, "db/accounts.json");
     return;
 }
 
@@ -158,18 +146,41 @@ void loginMenu(){
 }
 
 void mainMenu(){
+    char welcome[1024] = "Welcome, \0", newLine[3] = ".\n";
+    const char* welcomeFull = strcat(strcat(welcome, currentAccount), newLine);
+    const char* menu = "1. Show online users\nYour choice: ";
+
     assert(login);
-    loadOnlineUsers();
+
+    loadJson(onlineAccounts, "db/online.json");
     onlineAccounts[currentAccount] = c;
-    saveOnlineUsers();
+    saveJson(onlineAccounts, "db/online.json");
+
+    send(c, welcomeFull, strlen(welcomeFull), 0);
     while(1){
+        send(c, menu, strlen(menu), 0);
         char buffer[1024] = { 0 };
         int i = recv(c, buffer, sizeof(buffer) - 1, 0);
+        while(buffer[strlen(buffer) - 1] == '\r' || buffer[strlen(buffer) - 1] == '\n') buffer[strlen(buffer) - 1] = 0;
+        int cmd = atoi(buffer);
         if(errno == ENOTCONN || i == 0){
             // cout << "connection died in main.\n";
             onlineAccounts.erase(currentAccount);
-            saveOnlineUsers();
+            saveJson(onlineAccounts, "db/online.json");
             return;
+        }
+        switch(cmd){
+            case 1:
+                loadJson(onlineAccounts, "db/online.json");
+                for(auto& i: onlineAccounts.items()){
+                    if(i.value().is_null()) continue;
+                    string tmp = i.key() + "\n";
+                    send(c, tmp.c_str(), strlen(tmp.c_str()), 0);
+                }
+                break;
+            default:
+                send(c, invalidCommand, strlen(invalidCommand), 0);
+                continue;
         }
     }
     return;
@@ -179,7 +190,6 @@ int main(int argc, char* argv[]){
     c = atoi(argv[1]);
     loginMenu();
     if(!login) return 0;
-    cout << "hi " << currentAccount << endl;
     mainMenu();
     return 0;
 }
