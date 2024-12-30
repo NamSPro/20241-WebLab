@@ -3,3 +3,6 @@
 server
 clientHandler
 accounts.json
+online.json
+rating.json
+game.dat

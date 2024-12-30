@@ -1,13 +1,13 @@
-#include "includes.h"
+#include "chess_main.h"
+#include "../json.hpp"
 
-#include "user_interface.h"
-#include "chess.h"
-
+using json = nlohmann::json;
 
 //---------------------------------------------------------------------------------------
 // Global variable
 //---------------------------------------------------------------------------------------
 Game* current_game = NULL;
+int whiteSocket, blackSocket;
 
 
 //---------------------------------------------------------------------------------------
@@ -420,58 +420,77 @@ void undoMove(void)
 
 void movePiece(void)
 {
-   std::string to_record;
+    printMessage();
+    std::string to_record;
 
    // Get user input for the piece they want to move
-   cout << "Choose piece to be moved. (example: A1 or b2): ";
+    if(!current_game->getCurrentTurn()){
+        send(whiteSocket, "Your move: ", 11, 0);
+        send(blackSocket, "Waiting for opponent's move...", 30, 0);
+    }
+    else{
+        send(blackSocket, "Your move: ", 11, 0);
+        send(whiteSocket, "Waiting for opponent's move...", 30, 0);
+    }
+    int moveSocket = !current_game->getCurrentTurn() ? whiteSocket : blackSocket;
+    char move_from[1024] = { 0 };
+    int i = recv(moveSocket, move_from, 1024, 0);
+    if(errno == ENOTCONN || i == 0){
+        current_game->m_bGameFinished = true;
+        return;
+    }
+    while(move_from[strlen(move_from) - 1] == '\r' || move_from[strlen(move_from) - 1] == '\n')
+        move_from[strlen(move_from) - 1] = 0;
 
-   std::string move_from;
-   getline(cin, move_from);
+    if ( strlen(move_from) > 2 )
+    {
+        createNextMessage("You should type only two characters (column and row)\n");
+        return;
+    }
+    if((move_from[0] == 'R' || move_from[0] == 'r') && (move_from[1] == 'e' || move_from[1] == 'E')){
+        current_game->m_bGameFinished = true;
+        send(moveSocket, "You resigned.\n", 15, 0);
+        return;
+    }
 
-   if ( move_from.length() > 2 )
-   {
-      createNextMessage("You should type only two characters (column and row)\n");
-      return;
-   }
+    Chess::Position present;
+    present.iColumn = move_from[0];
+    present.iRow    = move_from[1];
 
-   Chess::Position present;
-   present.iColumn = move_from[0];
-   present.iRow    = move_from[1];
+    // ---------------------------------------------------
+    // Did the user pick a valid piece?
+    // Must check if:
+    // - It's inside the board (A1-H8)
+    // - There is a piece in the square
+    // - The piece is consistent with the player's turn
+    // ---------------------------------------------------
+    present.iColumn = toupper(present.iColumn);
 
-   // ---------------------------------------------------
-   // Did the user pick a valid piece?
-   // Must check if:
-   // - It's inside the board (A1-H8)
-   // - There is a piece in the square
-   // - The piece is consistent with the player's turn
-   // ---------------------------------------------------
-   present.iColumn = toupper(present.iColumn);
+    if ( present.iColumn < 'A' || present.iColumn > 'H' )
+    {
+        createNextMessage("Invalid column.\n");
+        return;
+    }
 
-   if ( present.iColumn < 'A' || present.iColumn > 'H' )
-   {
-      createNextMessage("Invalid column.\n");
-      return;
-   }
+    if ( present.iRow < '0' || present.iRow > '8' )
+    {
+        createNextMessage("Invalid row.\n");
+        return;
+    }
 
-   if ( present.iRow < '0' || present.iRow > '8' )
-   {
-      createNextMessage("Invalid row.\n");
-      return;
-   }
+    // Put in the string to be logged
+    to_record += present.iColumn;
+    to_record += present.iRow;
+    to_record += "-";
 
-   // Put in the string to be logged
-   to_record += present.iColumn;
-   to_record += present.iRow;
-   to_record += "-";
-
-   // Convert column from ['A'-'H'] to [0x00-0x07]
-   present.iColumn = present.iColumn - 'A';
+    // Convert column from ['A'-'H'] to [0x00-0x07]
+    present.iColumn = present.iColumn - 'A';
 
    // Convert row from ['1'-'8'] to [0x00-0x07]
    present.iRow  = present.iRow  - '1';
 
    char chPiece = current_game->getPieceAtPosition(present.iRow, present.iColumn);
-   cout << "Piece is " << char(chPiece) << "\n";
+   //cout << "Piece is " << char(chPiece) << "\n";
 
    if ( 0x20 == chPiece )
    {
@@ -499,15 +518,20 @@ void movePiece(void)
    // ---------------------------------------------------
    // Get user input for the square to move to
    // ---------------------------------------------------
-   cout << "Move to: ";
-   std::string move_to;
-   getline(cin, move_to);
-
-   if ( move_to.length() > 2 )
-   {
-      createNextMessage("You should type only two characters (column and row)\n");
-      return;
-   }
+    send(moveSocket, "Move to: ", 9, 0);
+    char move_to[1024] = { 0 };
+    recv(moveSocket, move_to, 1024, 0);
+    while(move_to[strlen(move_to) - 1] == '\r' || move_to[strlen(move_to) - 1] == '\n')
+        move_to[strlen(move_to) - 1] = 0;
+    if(errno == ENOTCONN || i == 0){
+        current_game->m_bGameFinished = true;
+        return;
+    }
+    if ( strlen(move_to) > 2 )
+    {
+        createNextMessage("You should type only two characters (column and row)\n");
+        return;
+    }
 
    // ---------------------------------------------------
    // Did the user pick a valid house to move?
@@ -640,215 +664,123 @@ void movePiece(void)
          }
       }
    }
-
-   return;
+    
+    return;
 }
 
-void saveGame(void)
+void saveGame(char player1[], char player2[])
 {
-   string file_name;
-   cout << "Type file name to be saved (no extension): ";
+    string file_name = "game.dat";
 
-   getline(cin, file_name);
-   file_name += ".dat";
-
-   std::ofstream ofs(file_name);
-   if (ofs.is_open())
-   {
-      // Write the date and time of save operation
-      auto time_now = std::chrono::system_clock::now();
-      std::time_t end_time = std::chrono::system_clock::to_time_t(time_now);
-      ofs << "[Chess console] Saved at: " << std::ctime(&end_time);
-
-      // Write the moves
-      for (unsigned i = 0; i < current_game->rounds.size(); i++)
-      {
-         ofs << current_game->rounds[i].white_move.c_str() << " | " << current_game->rounds[i].black_move.c_str() << "\n";
-      }
-
-      ofs.close();
-      createNextMessage("Game saved as " + file_name + "\n");
-   }
-   else
-   {
-      cout << "Error creating file! Save failed\n";
-   }
-
-   return;
+    std::ofstream ofs(file_name);
+    if (ofs.is_open())
+    {
+        // Write the date and time of save operation
+        auto time_now = std::chrono::system_clock::now();
+        std::time_t end_time = std::chrono::system_clock::to_time_t(time_now);
+        ofs << "[Chess console] Saved at: " << std::ctime(&end_time);
+        ofs << "White player: " << player1 << "\n";
+        ofs << "Black player: " << player2 << "\n";
+        // Write the moves
+        for (unsigned i = 0; i < current_game->rounds.size(); i++)
+        {
+            ofs << current_game->rounds[i].white_move.c_str() << " | " << current_game->rounds[i].black_move.c_str() << "\n";
+        }
+        ofs.close();
+        createNextMessage("Game saved as " + file_name + "\n");
+    }
+    else
+    {
+        cout << "Error creating file! Save failed" << endl;
+    }
+    return;
 }
 
-void loadGame(void)
-{
-   string file_name;
-   cout << "Type file name to be loaded (no extension): ";
-
-   getline(cin, file_name);
-   file_name += ".dat";
-
-   std::ifstream ifs(file_name);
-
-   if (ifs)
-   {
-      try
-      {
-         // First, reset the pieces
-         if (NULL != current_game)
-         {
-            delete current_game;
-         }
-
-         current_game = new Game();
-         
-         // Now, read the lines from the file and then make the moves
-         std::string line;
-
-         while (std::getline(ifs, line) )
-         {
-            // Skip lines that starts with "[]"
-            if ( 0 == line.compare(0, 1, "["))
-            {
-               continue;
-            }
-
-            // There might be one or two moves in the line
-            string loaded_move[2];
-
-            // Find the separator and subtract one
-            std::size_t separator = line.find(" |");
-
-            // For the first move, read from the beginning of the string until the separator
-            loaded_move[0] = line.substr(0, separator);
-
-            // For the second move, read from the separator until the end of the string (omit second parameter)
-            loaded_move[1] = line.substr(line.find("|") + 2);
-            
-
-            for (int i = 0; i < 2 && loaded_move[i] != ""; i++)
-            {
-               // Parse the line
-               Chess::Position from;
-               Chess::Position to;
-
-               char chPromoted = 0;
-
-               current_game->parseMove(loaded_move[i], &from, &to, &chPromoted);
-
-               // Check if line is valid
-               if ( from.iColumn < 0 || from.iColumn > 7 ||
-                  from.iRow    < 0 || from.iRow    > 7 ||
-                  to.iColumn   < 0 || to.iColumn   > 7 ||
-                  to.iRow      < 0 || to.iRow      > 7 )
-               {
-                  createNextMessage("[Invalid] Can't load this game because there are invalid lines!\n");
-
-                  // Clear everything and return
-                  current_game = new Game();
-                  return;
-               }
-
-               // Is that move allowed? (should be because we already validated before saving)
-               Chess::EnPassant S_enPassant = { 0 };
-               Chess::Castling  S_castling  = { 0 };
-               Chess::Promotion S_promotion = { 0 };
-
-               if ( false == isMoveValid(from, to, &S_enPassant, &S_castling, &S_promotion) )
-               {
-                  createNextMessage("[Invalid] Can't load this game because there are invalid moves!\n");
-
-                  // Clear everything and return
-                  current_game = new Game();
-                  return;
-               }
-
-               // ---------------------------------------------------
-               // A promotion occurred
-               // ---------------------------------------------------
-               if ( S_promotion.bApplied == true )
-               {
-                  if ( chPromoted != 'Q' && chPromoted != 'R' && chPromoted != 'N' && chPromoted != 'B' )
-                  {
-                     createNextMessage("[Invalid] Can't load this game because there is an invalid promotion!\n");
-
-                     // Clear everything and return
-                     current_game = new Game();
-                     return;
-                  }
-
-                  S_promotion.chBefore = current_game->getPieceAtPosition(from.iRow, from.iColumn);
-
-                  if (Chess::WHITE_PLAYER == current_game->getCurrentTurn())
-                  {
-                     S_promotion.chAfter = toupper(chPromoted);
-                  }
-                  else
-                  {
-                     S_promotion.chAfter = tolower(chPromoted);
-                  }
-               }
-
-
-               // Log the move
-               current_game->logMove(loaded_move[i]);
-
-               // Make the move
-               makeTheMove(from, to, &S_enPassant, &S_castling, &S_promotion);
-            }
-         }
-
-         // Extra line after the user input
-         createNextMessage("Game loaded from " + file_name + "\n");
-
-         return;
-      }
-      catch (const std::out_of_range& e) {
-        // Catch block to handle the exception
-        std::cerr << "Exception caught: " << e.what() << std::endl;
-      }
-      catch (...) {
-         // Catch block to handle any other exception
-         std::cerr << "Unknown exception caught" << std::endl;
-      }
-   }
-   else
-   {
-      createNextMessage("Error loading " + file_name + ". Creating a new game instead\n");
-      current_game = new Game();
-      return;
-   }
+void loadJson(json& target, string path){
+    ifstream f(path);
+    target = json::parse(f);
+    f.close();
 }
 
-int main()
-{
-   bool bRun = true;
+void saveJson(json& target, string path){
+    ofstream f(path);
+    f << target.dump(4);
+    f.close();
+}
 
-   // Clear screen an print the logo
-   clearScreen();
-   printLogo();
+void sendFileViaTCP(int socket, const std::string& filename) {
+    std::ifstream inFile(filename, std::ios::binary);
+    if (inFile.is_open()) {
+        inFile.seekg(0, std::ios::end);
+        std::streamsize fileSize = inFile.tellg();
+        inFile.seekg(0, std::ios::beg);
 
-   string input = "";
+        char buffer[1024];
+        while (fileSize > 0) {
+            inFile.read(buffer, sizeof(buffer));
+            std::streamsize bytesRead = inFile.gcount();
+            send(socket, buffer, bytesRead, 0);
+            fileSize -= bytesRead;
+        }
+        inFile.close();
+    } else {
+        std::cerr << "Unable to open file for reading: " << filename << std::endl;
+    }
+}
 
-   while( bRun )
-   {
-      printMessage();
-      printMenu();
+void resolveGame(char player1[], char player2[]){
+    json onlineAccounts;
+    int winner;
+    if(current_game->m_bGameDraw) winner = -1;
+    else winner = (Chess::WHITE_PLAYER == current_game->getCurrentTurn()) ? 1 : 0;
+    loadJson(onlineAccounts, "db/online.json");
+    json ratings;
+    loadJson(ratings, "db/rating.json");
+    if(winner == -1){
+        send(whiteSocket, "\nGame ended in a draw!", 23, 0);
+        send(blackSocket, "\nGame ended in a draw!", 23, 0);
+        return;
+    }
+    int tmp = -1;
+    while(1){
+        tmp++;
+        if(tmp == ratings.size()) break;
+        if(ratings[tmp]["name"] == player1) ratings[tmp]["rating"] = (int)ratings[tmp]["rating"] + ((!winner) ? 3 : -3);
+        if(ratings[tmp]["name"] == player2) ratings[tmp]["rating"] = (int)ratings[tmp]["rating"] + ((winner) ? 3 : -3);
+    }
+    send(whiteSocket, (!winner) ? "\nYou won!" : "\nYou lost!", 10, 0);
+    send(blackSocket, (winner) ? "\nYou won!" : "\nYou lost!", 10, 0);
+    saveJson(ratings, "db/rating.json");
+    onlineAccounts[player1]["status"] = onlineAccounts[player2]["status"] = 1;
+    saveJson(onlineAccounts, "db/online.json");
+    saveGame(player1, player2);
+    sendFileViaTCP(whiteSocket, "game.dat");
+    sendFileViaTCP(blackSocket, "game.dat");
+    send(whiteSocket, "Game log sent\n", 15, 0);
+    send(blackSocket, "Game log sent\n", 15, 0);
+    return;
+}
 
-      // Get input from user
-      cout << "Type here: ";
-      getline(cin, input);
-
-      if (input.length() != 1)
-      {
-         cout << "Invalid option. Type one letter only\n\n";
-         continue;
-      }
-               newGame();
-               clearScreen();
-               printLogo();
-               printSituation(*current_game);
-               printBoard(*current_game);
-
-   }
-
-
-   return 0;
+int chessMain(char player1[], char player2[]){
+    srand(time(0));
+    if(rand() % 2 == 1) swap(player1, player2);
+    json onlineAccounts;
+    loadJson(onlineAccounts, "db/online.json");
+    whiteSocket = onlineAccounts[player1]["socket"];
+    blackSocket = onlineAccounts[player2]["socket"];
+    newGame();
+    while(1){
+        if(current_game->isFinished()){
+            //clearScreen(whiteSocket, blackSocket);
+            //printBoard(*current_game, whiteSocket, blackSocket);
+            //printSituation(*current_game, whiteSocket, blackSocket);
+            resolveGame(player1, player2);
+            break;
+        }
+        clearScreen(whiteSocket, blackSocket);
+        printBoard(*current_game, whiteSocket, blackSocket);
+        printSituation(*current_game, whiteSocket, blackSocket);
+        movePiece();
+    }
+    return 0;
 }

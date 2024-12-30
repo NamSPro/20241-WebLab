@@ -1,0 +1,7 @@
+#pragma once
+enum USER_STATUS{
+    STATUS_OFFLINE,
+    STATUS_ONLINE,
+    STATUS_CHALLENGED,
+    STATUS_INGAME
+};

@@ -12,26 +12,36 @@
 
 #include <fstream>
 #include "../lib/json.hpp"
+#include "enums.h"
+#include "../lib/chess/chess_main.h"
 
 using namespace std;
 using json = nlohmann::json;
 
 int c; // client's socket number
 const char* invalidCommand = "Invalid command.\n";
-json accounts = {}, onlineAccounts = {};
+json accounts = {}, onlineAccounts = {}, ratings = {};
 bool login = false;
 char currentAccount[1024] = { 0 };
+int opponentCount = 0;
+char availableOpponents[1024][1024] = { 0 };
 
-void loadJson(json& target, string path){
-    ifstream f(path);
-    target = json::parse(f);
-    f.close();
+void inputCheck(int i){
+    if(errno == ENOTCONN || i == 0){
+        onlineAccounts.erase(currentAccount);
+        saveJson(onlineAccounts, "db/online.json");
+        close(c);
+        exit(0);
+    }
 }
 
-void saveJson(json& target, string path){
-    ofstream f(path);
-    f << target.dump(4);
-    f.close();
+bool opponentInputCheck(int i){
+    const char* opponentGone = "Opponent disconnected.";
+    if(errno == ENOTCONN || i == 0){
+        send(c, opponentGone, strlen(opponentGone), 0);
+        return false;
+    }
+    return true;
 }
 
 void handleLogin(){
@@ -109,6 +119,9 @@ void handleRegister(){
     send(c, registerSuccess, strlen(registerSuccess), 0);
     accounts[usernameBuffer] = passwordBuffer;
     saveJson(accounts, "db/accounts.json");
+    loadJson(ratings, "db/rating.json");
+    ratings.push_back({{"name", usernameBuffer}, {"rating", 0}});
+    saveJson(ratings, "db/rating.json");
     return;
 }
 
@@ -120,10 +133,7 @@ void loginMenu(){
         send(c, welcome, strlen(welcome), 0);
         char buffer[1024] = { 0 };
         int i = recv(c, buffer, sizeof(buffer) - 1, 0);
-        if(errno == ENOTCONN || i == 0){
-            // cout << "connection died in login.\n";
-            return;
-        }
+        inputCheck(i);
         while(buffer[strlen(buffer) - 1] == '\r' || buffer[strlen(buffer) - 1] == '\n') buffer[strlen(buffer) - 1] = 0;
         int cmd = atoi(buffer);
         switch (cmd){
@@ -145,37 +155,136 @@ void loginMenu(){
     }
 }
 
+bool ratingCmp(json a, json b){
+    if(a["rating"] == b["rating"]) return a < b;
+    return a["rating"] > b["rating"];
+}
+
+void findOpponents(){
+    json ratings;
+    opponentCount = 0;
+    loadJson(onlineAccounts, "db/online.json");
+    loadJson(ratings, "db/rating.json");
+    sort(ratings.begin(), ratings.end(), ratingCmp);
+    saveJson(ratings, "db/rating.json");
+    int currentRank = -1, tmp = -1;
+    while(1){
+        tmp++;
+        if(tmp == ratings.size()) break;
+        if(ratings[tmp]["name"] == currentAccount){
+            if(currentRank != -1) continue;
+            currentRank = tmp;
+            tmp -= 10;
+            if(tmp < 0) tmp = 0;
+        }
+        if(currentRank != -1 || abs(currentRank - tmp) <= 10){
+            string opponentName = ratings[tmp]["name"];
+            if(opponentName == currentAccount) continue;
+            if(onlineAccounts[opponentName]["status"] != STATUS_ONLINE) continue;
+            strcpy(availableOpponents[opponentCount], opponentName.c_str());
+            opponentCount++;
+        }
+    }
+    return;
+}
+
+void sendChallenge(char opponent[]){
+    const char* screenClear = "\033[2J\033[1;1H";
+    const char* waiting = "Waiting for opponent to respond...";
+    const char *challenge = "User ", *challengePt2 = " has challenged you to a match! Accept? (y/n)";
+    
+    loadJson(onlineAccounts, "db/online.json");
+    int opponentSocket = onlineAccounts[opponent]["socket"];
+    onlineAccounts[currentAccount]["status"] = onlineAccounts[opponent]["status"] = STATUS_CHALLENGED;
+    saveJson(onlineAccounts, "db/online.json");
+    send(c, screenClear, strlen(screenClear), 0);
+    send(c, waiting, strlen(waiting), 0);
+    send(opponentSocket, screenClear, strlen(screenClear), 0);
+    send(opponentSocket, challenge, strlen(challenge), 0);
+    send(opponentSocket, currentAccount, strlen(currentAccount), 0);
+    send(opponentSocket, challengePt2, strlen(challengePt2), 0);
+    char buffer[1024] = { 0 };
+    recv(opponentSocket, buffer, sizeof(buffer) - 1, 0);
+    while(buffer[strlen(buffer) - 1] == '\r' || buffer[strlen(buffer) - 1] == '\n') buffer[strlen(buffer) - 1] = 0;
+    if(buffer[0] == 'y'){
+        onlineAccounts[currentAccount]["status"] = onlineAccounts[opponent]["status"] = STATUS_INGAME;
+        saveJson(onlineAccounts, "db/online.json");
+        send(c, screenClear, strlen(screenClear), 0);
+        send(opponentSocket, screenClear, strlen(screenClear), 0);
+        send(c, "Game started!\n", strlen("Game started!\n"), 0);
+        send(opponentSocket, "Game started!\n", strlen("Game started!\n"), 0);
+        chessMain(currentAccount, opponent);
+    }
+    else{
+        onlineAccounts[currentAccount]["status"] = onlineAccounts[opponent]["status"] = STATUS_ONLINE;
+        saveJson(onlineAccounts, "db/online.json");
+        send(c, screenClear, strlen(screenClear), 0);
+        send(c, "Challenge rejected.\n", strlen("Challenge rejected.\n"), 0);
+        send(opponentSocket, screenClear, strlen(screenClear), 0);
+        send(opponentSocket, "Challenge rejected.\n", strlen("Challenge rejected.\n"), 0);
+    }
+    return;
+}
+
 void mainMenu(){
     char welcome[1024] = "Welcome, \0", newLine[3] = ".\n";
     const char* welcomeFull = strcat(strcat(welcome, currentAccount), newLine);
-    const char* menu = "1. Show online users\nYour choice: ";
+    const char* menu = "1. Show online users\n2. Send a challenge\nYour choice: ";
+    const char* availableOpponent = "Available opponents: \n";
+    const char* selectOpponent = "Your choice: ";
 
     assert(login);
 
     loadJson(onlineAccounts, "db/online.json");
-    onlineAccounts[currentAccount] = c;
+    onlineAccounts[currentAccount] = {{"status", STATUS_ONLINE}, {"socket", c}};
     saveJson(onlineAccounts, "db/online.json");
 
     send(c, welcomeFull, strlen(welcomeFull), 0);
     while(1){
+        loadJson(onlineAccounts, "db/online.json");
+        if(onlineAccounts[currentAccount]["status"] == STATUS_CHALLENGED || onlineAccounts[currentAccount]["status"] == STATUS_INGAME){
+            sleep(1000);
+            continue;
+        }
         send(c, menu, strlen(menu), 0);
         char buffer[1024] = { 0 };
         int i = recv(c, buffer, sizeof(buffer) - 1, 0);
+        inputCheck(i);
         while(buffer[strlen(buffer) - 1] == '\r' || buffer[strlen(buffer) - 1] == '\n') buffer[strlen(buffer) - 1] = 0;
         int cmd = atoi(buffer);
-        if(errno == ENOTCONN || i == 0){
-            // cout << "connection died in main.\n";
-            onlineAccounts.erase(currentAccount);
-            saveJson(onlineAccounts, "db/online.json");
-            return;
+        if(onlineAccounts[currentAccount]["status"] == STATUS_CHALLENGED || onlineAccounts[currentAccount]["status"] == STATUS_INGAME){
+            sleep(1000);
+            continue;
         }
         switch(cmd){
             case 1:
                 loadJson(onlineAccounts, "db/online.json");
                 for(auto& i: onlineAccounts.items()){
-                    if(i.value().is_null()) continue;
+                    if(i.value()["status"].is_null() || i.value()["status"] == STATUS_OFFLINE) continue;
                     string tmp = i.key() + "\n";
                     send(c, tmp.c_str(), strlen(tmp.c_str()), 0);
+                }
+                break;
+            case 2:
+                findOpponents();
+                send(c, availableOpponent, strlen(availableOpponent), 0);
+                for(int i = 0; i < opponentCount; i++){
+                    char numberBuffer[12];
+                    sprintf(numberBuffer, "%d. ", i + 1);
+                    send(c, numberBuffer, strlen(numberBuffer), 0);
+                    send(c, availableOpponents[i], strlen(availableOpponents[i]), 0);
+                    send(c, newLine, strlen(newLine), 0);
+                    send(c, selectOpponent, strlen(selectOpponent), 0);
+                    i = recv(c, buffer, sizeof(buffer) - 1, 0);
+                    inputCheck(i);
+                    while(buffer[strlen(buffer) - 1] == '\r' || buffer[strlen(buffer) - 1] == '\n') buffer[strlen(buffer) - 1] = 0;
+                    cmd = atoi(buffer);
+                    cmd--;
+                    if(cmd < 0 || cmd >= opponentCount){
+                        send(c, invalidCommand, strlen(invalidCommand), 0);
+                        continue;
+                    }
+                    sendChallenge(availableOpponents[cmd]);
                 }
                 break;
             default:

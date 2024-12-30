@@ -189,6 +189,7 @@ public:
    // Save the captured pieces
    std::vector<char> white_captured;
    std::vector<char> black_captured;
+   bool m_bGameDraw, m_bGameFinished;
 
 private:
 
@@ -217,5 +218,4 @@ private:
    int  m_CurrentTurn;
 
    // Has the game finished already?
-   bool m_bGameFinished;
 };
